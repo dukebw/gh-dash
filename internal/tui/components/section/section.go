@@ -48,6 +48,7 @@ type BaseModel struct {
 	IsSearchSupported         bool
 	ShowAuthorIcon            bool
 	IsFilteredByCurrentRemote bool
+	emptyState                *string
 	IsLoading                 bool
 }
 
@@ -182,6 +183,7 @@ type Table interface {
 	ResetRows()
 	GetIsLoading() bool
 	SetIsLoading(val bool) tea.Cmd
+	SetError(err error) tea.Cmd
 }
 
 type Search interface {
@@ -542,6 +544,9 @@ func (m *BaseModel) IsDataStale() bool {
 func (m *BaseModel) SetIsLoading(val bool) tea.Cmd {
 	m.IsLoading = val
 	if !val {
+		if m.emptyState != nil {
+			m.Table.EmptyState = m.emptyState
+		}
 		m.Table.SetIsLoading(false)
 		return nil
 	}
@@ -553,6 +558,19 @@ func (m *BaseModel) SetIsLoading(val bool) tea.Cmd {
 	}
 
 	return nil
+}
+
+// SetError stops the loading state and shows err where the rows would be, so a
+// failed fetch is visible instead of leaving the spinner running forever.
+func (m *BaseModel) SetError(err error) tea.Cmd {
+	cmd := m.SetIsLoading(false)
+	if m.emptyState == nil {
+		m.emptyState = m.Table.EmptyState
+	}
+	m.Table.EmptyState = utils.StringPtr(
+		m.Ctx.Styles.Section.EmptyStateStyle.Render(fmt.Sprintf("Error: %s", err)),
+	)
+	return cmd
 }
 
 func ToImplSections[T Section](sections []Section) []T {

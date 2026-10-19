@@ -156,6 +156,12 @@ func (t *TestSection) SetIsLoading(val bool) tea.Cmd {
 	return nil
 }
 
+// SetError implements section.Section.
+func (t *TestSection) SetError(err error) tea.Cmd {
+	t.loading = false
+	return nil
+}
+
 // SetIsLoading implements section.Section.
 func (t *TestSection) IsDataStale() bool {
 	return false

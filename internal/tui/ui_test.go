@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bytes"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -31,6 +32,7 @@ import (
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/section"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/sidebar"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/tabs"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/keys"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/theme"
@@ -2251,4 +2253,43 @@ func TestNotificationCommandTemplateVariables(t *testing.T) {
 			require.Equal(t, tc.expected, result)
 		})
 	}
+}
+
+func TestTaskFinishedMsgErrorStopsSectionLoading(t *testing.T) {
+	cfg, err := config.ParseConfig(config.Location{
+		ConfigFlag: "../config/testdata/test-config.yml",
+	})
+	require.NoError(t, err)
+
+	ctx := &context.ProgramContext{
+		Config: &cfg,
+		View:   config.PRsView,
+	}
+	ctx.Theme = theme.ParseTheme(ctx.Config)
+	ctx.Styles = context.InitStyles(ctx.Theme)
+	ctx.StartTask = func(task context.Task) tea.Cmd { return nil }
+
+	m := NewModel(
+		config.Location{ConfigFlag: "../config/testdata/test-config.yml"},
+		Repositories{},
+	)
+	m.ctx = ctx
+
+	prsSection := prssection.NewModel(0, ctx, cfg.PRSections[0], time.Now(), time.Now())
+	prsSection.SetIsLoading(true)
+	require.True(t, prsSection.GetIsLoading())
+
+	const taskId = "fetching_prs_0"
+	m.prs = []section.Section{&prsSection}
+	m.tasks = map[string]context.Task{taskId: {Id: taskId, State: context.TaskStart}}
+
+	_, _ = m.Update(constants.TaskFinishedMsg{
+		SectionId:   0,
+		SectionType: prssection.SectionType,
+		TaskId:      taskId,
+		Err:         errors.New("HTTP 502: Bad Gateway"),
+	})
+
+	require.False(t, prsSection.GetIsLoading(), "a failed fetch must not leave the section spinning")
+	require.Contains(t, *prsSection.Table.EmptyState, "HTTP 502")
 }
