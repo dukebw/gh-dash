@@ -745,6 +745,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				log.Error("Task finished with error", "id", task.Id, "err", msg.Err)
 				task.State = context.TaskError
 				task.Error = msg.Err
+				// A failed fetch finishes without a message for its section, so
+				// the section would keep its spinner running forever.
+				if msg.Msg == nil {
+					if s := m.getSection(msg.SectionId, msg.SectionType); s != nil {
+						cmds = append(cmds, s.SetError(msg.Err))
+					}
+				}
 			} else {
 				task.State = context.TaskFinished
 			}
@@ -1121,6 +1128,27 @@ func (m *Model) syncProgramContext() {
 	m.issueSidebar.UpdateProgramContext(m.ctx)
 	m.branchSidebar.UpdateProgramContext(m.ctx)
 	m.notificationView.UpdateProgramContext(m.ctx)
+}
+
+func (m *Model) getSection(id int, sType string) section.Section {
+	switch sType {
+	case reposection.SectionType:
+		return m.repo
+	case notificationssection.SectionType:
+		if id < len(m.notifications) {
+			return m.notifications[id]
+		}
+	case prssection.SectionType:
+		if id < len(m.prs) {
+			return m.prs[id]
+		}
+	case issuessection.SectionType:
+		if id < len(m.issues) {
+			return m.issues[id]
+		}
+	}
+
+	return nil
 }
 
 func (m *Model) updateSection(id int, sType string, msg tea.Msg) (cmd tea.Cmd) {

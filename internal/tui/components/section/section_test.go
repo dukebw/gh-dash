@@ -1,6 +1,7 @@
 package section
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -529,4 +530,42 @@ func TestViewRendersAtMainContentWidth(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSetErrorStopsLoadingAndShowsTheError(t *testing.T) {
+	cfg, err := config.ParseConfig(config.Location{
+		ConfigFlag:       "../../../config/testdata/test-config.yml",
+		SkipGlobalConfig: true,
+	})
+	require.NoError(t, err)
+
+	thm := theme.ParseTheme(&cfg)
+	ctx := &context.ProgramContext{
+		Config: &cfg,
+		Theme:  thm,
+		Styles: context.InitStyles(thm),
+	}
+
+	m := NewModel(ctx, NewSectionOptions{
+		Id:       0,
+		Config:   config.SectionConfig{Title: "Mine", Filters: "is:open author:@me"},
+		Ctx:      ctx,
+		Type:     "pr",
+		Singular: "PR",
+		Plural:   "PRs",
+	})
+	require.Contains(t, *m.Table.EmptyState, "No PRs were found")
+
+	m.SetIsLoading(true)
+	require.True(t, m.Table.IsLoading())
+
+	m.SetError(errors.New("HTTP 502: Bad Gateway"))
+
+	require.False(t, m.IsLoading)
+	require.False(t, m.Table.IsLoading(), "a failed fetch must stop the spinner")
+	require.Contains(t, *m.Table.EmptyState, "HTTP 502")
+
+	// The next successful fetch goes back to the regular empty state.
+	m.SetIsLoading(false)
+	require.Contains(t, *m.Table.EmptyState, "No PRs were found")
 }
