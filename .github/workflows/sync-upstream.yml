@@ -1,0 +1,143 @@
+# Fork maintenance for dukebw/gh-dash. Not part of upstream dlvhdr/gh-dash.
+#
+# - `main` mirrors upstream's main.
+# - `patched`, the default branch, is upstream plus this fork's commits. It is
+#   rebased here whenever upstream moves, then built and published as a release
+#   so that `gh extension upgrade dash` picks it up.
+#
+# To add a patch, commit it on `patched` and push. If a run fails because the
+# patches conflict with upstream, rebase `patched` by hand and force-push it.
+name: sync-upstream
+
+on:
+  schedule:
+    - cron: "23 10 * * *"
+  workflow_dispatch:
+  push:
+    branches: [patched]
+
+concurrency: sync-upstream
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  UPSTREAM_REPO: dlvhdr/gh-dash
+  # "release" rebases the patches onto upstream's latest release tag,
+  # "main" onto upstream's main branch.
+  UPSTREAM_TRACK: release
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout patched
+        uses: actions/checkout@v5
+        with:
+          ref: patched
+          fetch-depth: 0
+          # GITHUB_TOKEN cannot push commits that touch workflow files, and
+          # upstream's history does.
+          ssh-key: ${{ secrets.SYNC_DEPLOY_KEY }}
+
+      - name: Mirror upstream main
+        run: |
+          git remote add upstream "https://github.com/$UPSTREAM_REPO.git"
+          git fetch --quiet --tags upstream main
+          git push origin refs/remotes/upstream/main:refs/heads/main
+
+      - name: Rebase patched onto upstream
+        id: rebase
+        run: |
+          case "$UPSTREAM_TRACK" in
+            release)
+              upstream_tag=$(gh api "repos/$UPSTREAM_REPO/releases/latest" --jq .tag_name)
+              target=$(git rev-parse "refs/tags/$upstream_tag^{commit}")
+              ;;
+            main)
+              target=$(git rev-parse upstream/main)
+              ;;
+            *)
+              echo "::error::Unknown UPSTREAM_TRACK '$UPSTREAM_TRACK'"
+              exit 1
+              ;;
+          esac
+
+          before=$(git rev-parse HEAD)
+          if git merge-base --is-ancestor "$target" HEAD; then
+            echo "patched already contains upstream $target"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            base=$(git merge-base HEAD upstream/main)
+            echo "Rebasing $(git rev-list --count "$base..HEAD") fork commits from $base onto $target"
+            if ! git rebase --onto "$target" "$base"; then
+              git status --short
+              echo "::error::The fork's patches conflict with upstream $target. Rebase 'patched' by hand and force-push it."
+              exit 1
+            fi
+          fi
+
+          sha=$(git rev-parse HEAD)
+          released=$(git ls-remote --tags origin '*-patched.*')
+          if grep -q "^$sha" <<< "$released"; then
+            echo "$sha is already released"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "before=$before" >> "$GITHUB_OUTPUT"
+
+      - name: Install Go
+        if: steps.rebase.outputs.release == 'true'
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: ./go.mod
+
+      - name: Test
+        if: steps.rebase.outputs.release == 'true'
+        run: |
+          go build ./...
+          go test ./...
+
+      - name: Push patched
+        if: steps.rebase.outputs.release == 'true'
+        run: git push --force-with-lease="patched:${{ steps.rebase.outputs.before }}" origin HEAD:patched
+
+      - name: Release
+        if: steps.rebase.outputs.release == 'true'
+        run: |
+          sha=$(git rev-parse HEAD)
+          upstream_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-patched.*')
+          released=$(git ls-remote --tags origin "$upstream_tag-patched.*")
+          last=$(sed 's/.*-patched\.//' <<< "$released" | sort -n | tail -1)
+          tag="$upstream_tag-patched.$(( ${last:-0} + 1 ))"
+
+          pkg=github.com/dlvhdr/gh-dash/v4/cmd
+          date=$(git show -s --format=%cI)
+          for platform in darwin-arm64 darwin-amd64 linux-arm64 linux-amd64; do
+            GOOS=${platform%-*} GOARCH=${platform#*-} CGO_ENABLED=0 go build -trimpath -tags=nodbus \
+              -ldflags "-s -w -X $pkg.Version=$tag -X $pkg.Commit=$sha -X $pkg.Date=$date -X $pkg.BuiltBy=$GITHUB_REPOSITORY" \
+              -o "dist/gh-dash_${tag}_${platform}" .
+          done
+
+          {
+            echo "Upstream $UPSTREAM_REPO $(git describe --tags --match 'v[0-9]*' --exclude '*-patched.*' "$(git merge-base HEAD upstream/main)") plus:"
+            echo
+            git log --reverse --format='- %h %s' "$(git merge-base HEAD upstream/main)..HEAD"
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" --target "$sha" --latest \
+            --title "$tag" --notes-file "$RUNNER_TEMP/notes.md"
+
+      # Upstream's workflows need upstream's secrets and would only fail here.
+      - name: Disable upstream workflows
+        if: always()
+        run: |
+          gh workflow list --repo "$GITHUB_REPOSITORY" --json id,path,state \
+            --jq '.[] | select(.state == "active" and .path != ".github/workflows/sync-upstream.yml") | .id' |
+            while read -r id; do
+              gh workflow disable "$id" --repo "$GITHUB_REPOSITORY"
+            done
