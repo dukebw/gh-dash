@@ -51,6 +51,9 @@ type EnrichedPullRequestData struct {
 	HeadRef struct {
 		Name string
 	}
+	// Fetched per PR rather than in the list query: GitHub can take seconds
+	// to resolve it for a single PR, which times out a whole section's search.
+	MergeStateStatus   MergeStateStatus
 	Labels             PRLabels  `graphql:"labels(first: 6)"`
 	Assignees          Assignees `graphql:"assignees(first: 3)"`
 	Repository         Repository
@@ -87,17 +90,16 @@ type PullRequestData struct {
 	HeadRef struct {
 		Name string
 	}
-	Repository       Repository
-	Assignees        Assignees            `graphql:"assignees(first: 3)"`
-	Comments         Comments             `graphql:"comments"`
-	ReviewThreads    ReviewThreads        `graphql:"reviewThreads"`
-	Reviews          ReviewsNumber        `graphql:"reviews"`
-	ReviewRequests   ReviewRequestsNumber `graphql:"reviewRequests"`
-	IsDraft          bool
-	IsInMergeQueue   bool
-	Commits          LastCommitStatus `graphql:"commits(last: 1)"`
-	Labels           PRLabels         `graphql:"labels(first: 6)"`
-	MergeStateStatus MergeStateStatus `graphql:"mergeStateStatus"`
+	Repository     Repository
+	Assignees      Assignees            `graphql:"assignees(first: 3)"`
+	Comments       Comments             `graphql:"comments"`
+	ReviewThreads  ReviewThreads        `graphql:"reviewThreads"`
+	Reviews        ReviewsNumber        `graphql:"reviews"`
+	ReviewRequests ReviewRequestsNumber `graphql:"reviewRequests"`
+	IsDraft        bool
+	IsInMergeQueue bool
+	Commits        LastCommitStatus `graphql:"commits(last: 1)"`
+	Labels         PRLabels         `graphql:"labels(first: 6)"`
 }
 
 type LastCommitStatus struct {
