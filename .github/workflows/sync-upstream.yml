@@ -11,7 +11,7 @@ name: sync-upstream
 
 on:
   schedule:
-    - cron: "23 10 * * *"
+    - cron: "43 14 * * *"
   workflow_dispatch:
   push:
     branches: [patched]
